@@ -1,0 +1,5 @@
+numpy~=1.19.1
+matplotlib~=3.3.2
+scikit-image~=0.17.2
+setuptools~=51.0.0
+tensorflow~=1.14.0

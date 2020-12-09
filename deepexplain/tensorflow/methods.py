@@ -2,15 +2,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import logging
 import sys
+import warnings
+from collections import OrderedDict
+
 import numpy as np
-from skimage.util import view_as_windows
-import warnings, logging
 import tensorflow as tf
+from skimage.util import view_as_windows
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import nn_grad, math_grad
-from collections import OrderedDict
-from .utils import make_batches, slice_arrays, to_list, unpack_singleton, placeholder_from_data
+
+from .utils import make_batches, slice_arrays, to_list, unpack_singleton
 
 SUPPORTED_ACTIVATIONS = [
     'Relu', 'Elu', 'Sigmoid', 'Tanh', 'Softplus'
@@ -67,10 +70,11 @@ class AttributionMethod(object):
     """
     Attribution method base class
     """
+
     def __init__(self, T, X, session, keras_learning_phase=None):
         self.T = T  # target Tensor
         self.X = X  # input Tensor
-        self.Y_shape = [None,] + T.get_shape().as_list()[1:]
+        self.Y_shape = [None, ] + T.get_shape().as_list()[1:]
         # Most often T contains multiple output units. In this case, it is often necessary to select
         # a single unit to compute contributions for. This can be achieved passing 'ys' as weight for the output Tensor.
         self.Y = tf.placeholder(tf.float32, self.Y_shape)
@@ -104,7 +108,9 @@ class AttributionMethod(object):
     def _check_input_compatibility(self, xs, ys=None, batch_size=None):
         if ys is not None:
             if not self.has_multiple_inputs and len(xs) != len(ys):
-                raise RuntimeError('When provided, ys must have the same batch size as xs (xs has batch size {} and ys {})'.format(len(xs), len(ys)))
+                raise RuntimeError(
+                    'When provided, ys must have the same batch size as xs (xs has batch size {} and ys {})'.format(
+                        len(xs), len(ys)))
             elif self.has_multiple_inputs and np.all([len(i) != len(ys) for i in xs]):
                 raise RuntimeError('When provided, ys must have the same batch size as all elements of xs')
         if batch_size is not None and batch_size > 0:
@@ -120,7 +126,8 @@ class AttributionMethod(object):
             else:
                 if self.X.shape[0].value is not None and self.X.shape[0].value is not batch_size:
                     raise RuntimeError('When using batch evaluation, the first dimension of the input tensor '
-                                       'must be compatible with the batch size. Found %s instead' % self.X.shape[0].value)
+                                       'must be compatible with the batch size. Found %s instead' % self.X.shape[
+                                           0].value)
 
     def _session_run_batch(self, T, xs, ys=None):
         feed_dict = {}
@@ -131,7 +138,7 @@ class AttributionMethod(object):
             feed_dict[self.X] = xs
 
         # If ys is not passed, produce a vector of ones that will be broadcasted to all batch samples
-        feed_dict[self.Y] = ys if ys is not None else np.ones([1,] + self.Y_shape[1:])
+        feed_dict[self.Y] = ys if ys is not None else np.ones([1, ] + self.Y_shape[1:])
 
         if self.keras_learning_phase is not None:
             feed_dict[self.keras_learning_phase] = 0
@@ -180,9 +187,9 @@ class AttributionMethod(object):
 
         if self.baseline is None:
             if self.has_multiple_inputs:
-                self.baseline = [np.zeros([1,] + xi.get_shape().as_list()[1:]) for xi in self.X]
+                self.baseline = [np.zeros([1, ] + xi.get_shape().as_list()[1:]) for xi in self.X]
             else:
-                self.baseline = np.zeros([1,] + self.X.get_shape().as_list()[1:])
+                self.baseline = np.zeros([1, ] + self.X.get_shape().as_list()[1:])
 
         else:
             if self.has_multiple_inputs:
@@ -204,6 +211,7 @@ class GradientBasedMethod(AttributionMethod):
     """
     Base class for gradient-based attribution methods
     """
+
     def get_symbolic_attribution(self):
         return tf.gradients(self.T, self.X)
 
@@ -226,10 +234,10 @@ class PerturbationBasedMethod(AttributionMethod):
     """
        Base class for perturbation-based attribution methods
        """
+
     def __init__(self, T, X, session, keras_learning_phase):
         super(PerturbationBasedMethod, self).__init__(T, X, session, keras_learning_phase)
         self.base_activation = None
-
 
 
 # -----------------------------------------------------------------------------
@@ -242,13 +250,14 @@ Returns zero attributions. For testing only.
 
 class DummyZero(GradientBasedMethod):
 
-    def get_symbolic_attribution(self,):
+    def get_symbolic_attribution(self, ):
         return tf.gradients(self.T, self.X)
 
     @classmethod
     def nonlinearity_grad_override(cls, op, grad):
         input = op.inputs[0]
         return tf.zeros_like(input)
+
 
 """
 Saliency maps
@@ -297,8 +306,10 @@ class IntegratedGradients(GradientBasedMethod):
             xs_mod = [b + (x - b) * alpha for x, b in zip(xs, self.baseline)] if self.has_multiple_inputs \
                 else self.baseline + (xs - self.baseline) * alpha
             _attr = self._session_run(self.explain_symbolic(), xs_mod, ys, batch_size)
-            if gradient is None: gradient = _attr
-            else: gradient = [g + a for g, a in zip(gradient, _attr)]
+            if gradient is None:
+                gradient = _attr
+            else:
+                gradient = [g + a for g, a in zip(gradient, _attr)]
 
         results = [g * (x - b) / self.steps for g, x, b in zip(
             gradient,
@@ -335,6 +346,7 @@ class EpsilonLRP(GradientBasedMethod):
         return grad * output / (input + eps *
                                 tf.where(input >= 0, tf.ones_like(input), -1 * tf.ones_like(input)))
 
+
 """
 DeepLIFT
 This reformulation only considers the "Rescale" rule
@@ -343,7 +355,6 @@ https://arxiv.org/abs/1704.02685
 
 
 class DeepLIFTRescale(GradientBasedMethod):
-
     _deeplift_ref = {}
 
     def __init__(self, T, X, session, keras_learning_phase, baseline=None):
@@ -482,10 +493,10 @@ class ShapleySampling(PerturbationBasedMethod):
         dims = len(X.shape)
         if sampling_dims is not None:
             if not 0 < len(sampling_dims) <= (dims - 1):
-                raise RuntimeError('sampling_dims must be a list containing 1 to %d elements' % (dims-1))
+                raise RuntimeError('sampling_dims must be a list containing 1 to %d elements' % (dims - 1))
             if 0 in sampling_dims:
                 raise RuntimeError('Cannot sample batch dimension: remove 0 from sampling_dims')
-            if any([x < 1 or x > dims-1 for x in sampling_dims]):
+            if any([x < 1 or x > dims - 1 for x in sampling_dims]):
                 raise RuntimeError('Invalid value in sampling_dims')
         else:
             sampling_dims = list(range(1, dims))
@@ -540,7 +551,6 @@ attribution_methods = OrderedDict({
     'occlusion': (Occlusion, 6),
     'shapley_sampling': (ShapleySampling, 7)
 })
-
 
 
 @ops.RegisterGradient("DeepExplainGrad")
@@ -643,8 +653,3 @@ class DeepExplain(object):
                                   'This might lead to unexpected or wrong results.' % op.type)
             elif 'keras_learning_phase' in op.name:
                 self.keras_phase_placeholder = op.outputs[0]
-
-
-
-
-
